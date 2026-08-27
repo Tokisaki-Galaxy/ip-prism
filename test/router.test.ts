@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleBatch, handleSingle, resolveOne } from '../src/router';
 import { resetLimiter } from '../src/ratelimit';
+import { clearCache } from '../src/db';
 import { buildQqwryDat, defaultFixture } from './fixture-builder';
+import { buildMmdb } from './mmdb-fixture-builder';
 import type { Env } from '../src/types';
 
 // ── Stub bindings ─────────────────────────────────────────────────────────
@@ -24,39 +26,62 @@ function kvStub(): KVNamespace & { store: Map<string, unknown> } {
   } as never;
 }
 
-/** Minimal R2Bucket serving the fixture bytes. */
-function r2Stub(bytes: Uint8Array | null): R2Bucket {
-  let current = bytes;
+/** Minimal key-aware R2Bucket serving per-object fixture bytes. */
+function r2Stub(objects: Map<string, Uint8Array>): R2Bucket {
   return {
-    async head(_key: string) {
-      if (!current) return null;
-      return { etag: `len${current.length}`, size: current.length } as R2Object;
+    async head(key: string) {
+      const v = objects.get(key);
+      if (!v) return null;
+      return { etag: `len${v.length}`, size: v.length } as R2Object;
     },
-    async get(_key: string) {
-      if (!current) return null;
+    async get(key: string) {
+      const v = objects.get(key);
+      if (!v) return null;
       return {
-        arrayBuffer: async () => current!.slice().buffer,
+        arrayBuffer: async () => v.slice().buffer,
       } as unknown as R2ObjectBody;
     },
     async put(key: string, value: ArrayBuffer | ArrayBufferView) {
       const u8 =
         value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer as ArrayBuffer, value.byteOffset, value.byteLength);
-      current = u8.slice();
-      void key;
+      objects.set(key, u8.slice());
       return { etag: `len${u8.length}` } as R2Object;
     },
     delete: async () => {},
   } as never;
 }
 
-/** Assemble an Env with the fixture dat pre-loaded into R2. */
+// ── Offline fixtures ──────────────────────────────────────────────────────
+
+/** GeoLite2-Country covering one v4 and one v6 network. */
+const geoliteCountryDb = buildMmdb([
+  { prefix: '8.8.8.0/24', record: { country: { iso_code: 'DE' } } },
+  { prefix: '2001:db8::/32', record: { country: { iso_code: 'US' } } },
+]);
+
+/** GeoLite2-ASN covering the same v4 network. */
+const geoliteAsnDb = buildMmdb([
+  {
+    prefix: '8.8.8.0/24',
+    record: { autonomous_system_number: 15169, autonomous_system_organization: 'GOOGLE' },
+  },
+]);
+
+/** Assemble an Env with all three offline fixtures pre-loaded into R2. */
 function makeEnv(overrides: Partial<Record<string, string>> = {}): Env {
+  const objects = new Map<string, Uint8Array>([
+    ['qqwry.dat', defaultFixture()],
+    ['GeoLite2-Country.mmdb', geoliteCountryDb],
+    ['GeoLite2-ASN.mmdb', geoliteAsnDb],
+  ]);
   return {
-    DB: r2Stub(defaultFixture()),
+    DB: r2Stub(objects),
     CACHE: kvStub(),
     DATA_PRIMARY_URL: 'https://mirror.invalid/a.dat',
     DATA_FALLBACK_URL: '',
     DATA_OBJECT_KEY: 'qqwry.dat',
+    GEOLITE_COUNTRY_KEY: 'GeoLite2-Country.mmdb',
+    GEOLITE_ASN_KEY: 'GeoLite2-ASN.mmdb',
     CACHE_TTL_SECONDS: '2592000',
     MAX_BATCH: '20',
     API_KEY: 'test-key',
@@ -69,6 +94,9 @@ function makeEnv(overrides: Partial<Record<string, string>> = {}): Env {
 beforeEach(() => {
   vi.unstubAllGlobals();
   resetLimiter();
+  // db.loadDbObject caches per object key isolate-globally; stub etags are
+  // size-derived, so clear between tests to avoid same-size fixture collisions.
+  clearCache();
 });
 
 afterEach(() => {
@@ -113,7 +141,7 @@ describe('handleSingle', () => {
   });
 
   it('marks pending when database is missing from R2', async () => {
-    const env = { ...makeEnv(), DB: r2Stub(null) } as unknown as Env;
+    const env = { ...makeEnv(), DB: r2Stub(new Map()) } as unknown as Env;
     const res = await handleSingle(new URL('https://x/v1/lookup?ip=77.77.77.77'), env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -205,7 +233,10 @@ describe('resolveOne — online provider gating', () => {
         country: Uint8Array.from([0xd6, 0xd0, 0xb9, 0xfa, 0x00]),
       },
     ]);
-    const env = { ...makeEnv({ AMAP_KEY: 'k' }), DB: r2Stub(cnDat) } as unknown as Env;
+    const env = {
+      ...makeEnv({ AMAP_KEY: 'k' }),
+      DB: r2Stub(new Map([['qqwry.dat', cnDat]])),
+    } as unknown as Env;
 
     const res = await resolveOne('36.99.5.5', env);
     expect(res.sources.amap?.ok).toBe(true);
@@ -241,5 +272,42 @@ describe('resolveOne — online provider gating', () => {
     expect(res.sources.ipinfo?.country).toBe('US');
     expect(res.sources.ipinfo?.lat).toBeCloseTo(37.4056, 4);
     expect(res.summary).toContain('Mountain View');
+  });
+});
+
+describe('resolveOne — geolite offline source', () => {
+  it('merges country + ASN into the result without any network call', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await resolveOne('8.8.8.8', makeEnv());
+    expect(res.sources.geolite?.ok).toBe(true);
+    expect(res.sources.geolite?.country).toBe('DE');
+    expect(res.sources.geolite?.asn).toBe('AS15169');
+    expect(res.sources.geolite?.org).toBe('GOOGLE');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.pending).toBe(false);
+  });
+
+  it('resolves IPv6 addresses that cz88 cannot cover', async () => {
+    const res = await resolveOne('2001:db8::1', makeEnv());
+    expect(res.sources.cz88?.ok).toBe(false);
+    expect(res.sources.geolite?.ok).toBe(true);
+    expect(res.sources.geolite?.country).toBe('US');
+    expect(res.summary).toBe('US');
+  });
+
+  it('marks pending when only the geolite dbs are missing', async () => {
+    // qqwry present; geolite objects absent — the cron will fill them in.
+    // 77.77.77.77 has no complete cached entry (the missing-db test above
+    // cached a pending result, which cacheGet never serves).
+    const objects = new Map<string, Uint8Array>([['qqwry.dat', defaultFixture()]]);
+    const env = { ...makeEnv(), DB: r2Stub(objects) } as unknown as Env;
+
+    const res = await resolveOne('77.77.77.77', env);
+    expect(res.sources.cz88?.ok).toBe(true);
+    expect(res.sources.geolite?.ok).toBe(false);
+    expect(res.sources.geolite?.error).toBe('database not loaded yet');
+    expect(res.pending).toBe(true);
   });
 });
