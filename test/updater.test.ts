@@ -79,7 +79,7 @@ describe('runUpdate', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const status = await runUpdate(envWith(db));
-    expect(status.startsWith('updated:')).toBe(true);
+    expect(status.startsWith('qqwry:updated:')).toBe(true);
     expect(db.objects.get('qqwry.dat')).toBeDefined();
     expect(fetchMock).toHaveBeenCalledTimes(1); // only primary contacted
   });
@@ -98,7 +98,7 @@ describe('runUpdate', () => {
       }),
     );
     const status = await runUpdate(envWith(db));
-    expect(status.startsWith('updated:')).toBe(true);
+    expect(status.startsWith('qqwry:updated:')).toBe(true);
     expect(call).toBe(2);
   });
 
@@ -129,6 +129,6 @@ describe('runUpdate', () => {
       }),
     );
     const status = await runUpdate(envWith(db));
-    expect(status).toBe('failed');
+    expect(status).toBe('qqwry:failed');
   });
 });

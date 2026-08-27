@@ -20,7 +20,7 @@
 import type { Env } from './types';
 import { verifyApiKey } from './auth';
 import { handleBatch, handleSingle, json } from './router';
-import { runUpdate } from './updater';
+import { runUpdate, anyPipelineFailed } from './updater';
 
 const VERSION = '0.1.0';
 
@@ -48,7 +48,7 @@ export default {
       }
       if (path === '/v1/admin/refresh' && request.method === 'POST') {
         const status = await runUpdate(env);
-        return json({ ok: status !== 'failed', status });
+        return json({ ok: !anyPipelineFailed(status), status });
       }
       return json({ error: 'not found' }, 404);
     } catch (err) {

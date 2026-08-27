@@ -1,9 +1,11 @@
 /**
- * Scheduled handler — daily qqwry.dat refresh.
+ * Scheduled handler — daily refresh of every offline database.
  *
- * Pulls the latest database from a public mirror (FW27623/qqwry primary,
- * metowolf/qqwry.dat fallback), compares against the current R2 object's
- * hash, and uploads only when content actually changed. This keeps the
+ * Each payload (qqwry.dat, GeoLite2-*.mmdb) is described by a pipeline:
+ * mirror URLs to try in order, the R2 object key to store under, and a
+ * validator that rejects error pages / truncated payloads before they can
+ * poison the serving path. Content that hasn't changed is skipped via
+ * fingerprint comparison against the stored object's etag. This keeps the
  * data pipeline fully automated with zero manual steps.
  *
  * @module updater
@@ -11,9 +13,60 @@
 
 import type { Env } from './types.ts';
 
-/** Mirrors to try, in order. Managed centrally so adding a source is one line. */
-function mirrorUrls(env: Env): string[] {
-  return [env.DATA_PRIMARY_URL, env.DATA_FALLBACK_URL].filter(Boolean);
+/** One offline database and how to refresh it. */
+export interface UpdatePipeline {
+  /** Short identifier used in the aggregated status string. */
+  label: string;
+  /** R2 object key the payload is stored under. */
+  objectKey: string;
+  /** Mirror URLs, tried in order. */
+  urls: string[];
+  /** Sanity check applied to every downloaded payload. */
+  validate: (bytes: Uint8Array) => boolean;
+}
+
+/**
+ * Build the active pipelines from env. A pipeline is disabled when none of
+ * its URLs are configured — empty string vars (e.g. local dev) skip cleanly.
+ */
+export function buildPipelines(env: Env): UpdatePipeline[] {
+  const pipelines: UpdatePipeline[] = [];
+
+  const qqwryUrls = [env.DATA_PRIMARY_URL, env.DATA_FALLBACK_URL].filter(Boolean);
+  if (qqwryUrls.length > 0) {
+    pipelines.push({
+      label: 'qqwry',
+      objectKey: env.DATA_OBJECT_KEY,
+      urls: qqwryUrls,
+      validate: looksLikeQqwryDat,
+    });
+  }
+
+  const geoCountryUrls = [
+    env.GEOLITE_COUNTRY_URL,
+    // Public daily-refresh mirror of the same MaxMind data, as a fallback
+    // when the primary release is missing/late.
+    'https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb',
+  ].filter(Boolean);
+  if (env.GEOLITE_COUNTRY_URL) {
+    pipelines.push({
+      label: 'geolite-country',
+      objectKey: env.GEOLITE_COUNTRY_KEY,
+      urls: geoCountryUrls,
+      validate: looksLikeMmdb,
+    });
+  }
+
+  if (env.GEOLITE_ASN_URL) {
+    pipelines.push({
+      label: 'geolite-asn',
+      objectKey: env.GEOLITE_ASN_KEY,
+      urls: [env.GEOLITE_ASN_URL],
+      validate: looksLikeMmdb,
+    });
+  }
+
+  return pipelines;
 }
 
 /**
@@ -36,6 +89,31 @@ export function looksLikeQqwryDat(buf: Uint8Array): boolean {
   );
 }
 
+/** ASCII bytes of the MMDB magic: 0xAB 0xCD 0xEF "MaxMind.com". */
+const MMDB_MAGIC = Uint8Array.of(
+  0xab, 0xcd, 0xef,
+  0x4d, 0x61, 0x78, 0x4d, 0x69, 0x6e, 0x64, 0x2e, 0x63, 0x6f, 0x6d,
+);
+
+/**
+ * Sanity-check that a downloaded buffer looks like a MaxMind DB (.mmdb):
+ * - ≥ 512 bytes (real files are ≥ hundreds of KB; fixtures are small)
+ * - starts with the 14-byte magic 0xAB CD EF "MaxMind.com"
+ * - the u32le metadata size at offset 14 points back inside the file and
+ *   the metadata section it addresses begins with a JSON object brace
+ */
+export function looksLikeMmdb(buf: Uint8Array): boolean {
+  if (buf.length < 512 || buf.length < MMDB_MAGIC.length + 4) return false;
+  for (let i = 0; i < MMDB_MAGIC.length; i++) {
+    if (buf[i] !== MMDB_MAGIC[i]) return false;
+  }
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const metaSize = view.getUint32(MMDB_MAGIC.length, true);
+  const metaStart = buf.length - metaSize;
+  if (metaSize <= 0 || metaStart <= MMDB_MAGIC.length || metaStart >= buf.length) return false;
+  return buf[metaStart] === 0x7b; // '{'
+}
+
 /** Fetch with timeout via AbortController (Workers have no global WAIT by default). */
 async function fetchWithTimeout(url: string, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -51,19 +129,27 @@ async function fetchWithTimeout(url: string, timeoutMs = 30000): Promise<Respons
   }
 }
 
-/**
- * Run one update cycle. Intended to be called from `scheduled()`.
- *
- * @returns status string for logging / testing assertions
- */
-export async function runUpdate(env: Env): Promise<string> {
-  const objectKey = env.DATA_OBJECT_KEY;
+/** FNV-1a over a byte range. */
+function fnvRange(data: Uint8Array, start: number, end: number): string {
+  let hash = 0x811c9dc5;
+  for (let i = start; i < end; i++) {
+    hash ^= data[i]!;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
+/**
+ * Run one update cycle for a single pipeline.
+ *
+ * @returns 'unchanged' | 'updated:<fingerprint>' | 'failed'
+ */
+export async function runPipelineUpdate(env: Env, pipeline: UpdatePipeline): Promise<string> {
   // Current version fingerprint (skip download entirely if mirror hasn't moved)
-  const existing = await env.DB.head(objectKey);
+  const existing = await env.DB.head(pipeline.objectKey);
   const existingTag = existing?.etag ?? null;
 
-  for (const url of mirrorUrls(env)) {
+  for (const url of pipeline.urls) {
     let res: Response;
     try {
       res = await fetchWithTimeout(url);
@@ -79,8 +165,10 @@ export async function runUpdate(env: Env): Promise<string> {
 
     const bytes = new Uint8Array(await res.arrayBuffer());
 
-    if (!looksLikeQqwryDat(bytes)) {
-      console.warn(`[updater] ${url} returned non-dat payload (${bytes.length}b)`);
+    if (!pipeline.validate(bytes)) {
+      console.warn(
+        `[updater] ${url} returned invalid payload for ${pipeline.label} (${bytes.length}b)`,
+      );
       continue;
     }
 
@@ -95,13 +183,13 @@ export async function runUpdate(env: Env): Promise<string> {
       return 'unchanged';
     }
 
-    await env.DB.put(objectKey, bytes, {
+    await env.DB.put(pipeline.objectKey, bytes, {
       httpMetadata: { contentType: 'application/octet-stream' },
       customMetadata: { fingerprint, fetchedFrom: url },
     });
 
     console.log(
-      `[updater] stored new dat: ${bytes.length} bytes from ${url} (fp=${fingerprint})`,
+      `[updater] stored ${pipeline.label}: ${bytes.length} bytes from ${url} (fp=${fingerprint})`,
     );
     return `updated:${fingerprint}`;
   }
@@ -109,12 +197,28 @@ export async function runUpdate(env: Env): Promise<string> {
   return 'failed';
 }
 
-/** FNV-1a over a byte range. */
-function fnvRange(data: Uint8Array, start: number, end: number): string {
-  let hash = 0x811c9dc5;
-  for (let i = start; i < end; i++) {
-    hash ^= data[i]!;
-    hash = Math.imul(hash, 0x01000193);
+/**
+ * Run one update cycle across every configured pipeline. Intended to be
+ * called from `scheduled()` / the admin refresh endpoint.
+ *
+ * @returns Aggregated per-pipeline status, e.g.
+ *          `qqwry:updated:1048577:ab12.. geolite-country:unchanged geolite-asn:failed`
+ *          (`qqwry:updated:<fp>` when only the legacy pipeline is enabled).
+ */
+export async function runUpdate(env: Env): Promise<string> {
+  const pipelines = buildPipelines(env);
+  if (pipelines.length === 0) return 'idle';
+
+  const parts: string[] = [];
+  for (const pipeline of pipelines) {
+    parts.push(`${pipeline.label}:${await runPipelineUpdate(env, pipeline)}`);
   }
-  return (hash >>> 0).toString(16).padStart(8, '0');
+  return parts.join(' ');
+}
+
+/** Whether any pipeline in an aggregated status ended in failure. */
+export function anyPipelineFailed(aggregatedStatus: string): boolean {
+  return aggregatedStatus
+    .split(/\s+/)
+    .some((part) => part.endsWith(':failed'));
 }
