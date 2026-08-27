@@ -10,6 +10,7 @@ import type { Env, GeoSource, LookupResult, SourceResult } from './types';
 import { cacheGet, cacheSet, singleFlight } from './cache';
 import { getDbBuffer } from './db';
 import { lookupCz88 } from './providers/cz88';
+import { lookupGeolite } from './providers/geolite';
 import { lookupIpInfo } from './providers/ipinfo';
 import { lookupAmap } from './providers/amap';
 import { isReservedIp, isValidIp, likelyChina, normaliseIp } from './util';
@@ -39,7 +40,7 @@ export function config(env: Env): RuntimeConfig {
  */
 export function summarise(sources: Partial<Record<GeoSource, SourceResult>>): string {
   const parts: string[] = [];
-  for (const key of ['cz88', 'ipinfo', 'amap'] as const) {
+  for (const key of ['cz88', 'geolite', 'ipinfo', 'amap'] as const) {
     const s = sources[key];
     if (!s?.ok) continue;
     if (!parts[0] && s.country) parts[0] = s.country;
@@ -81,6 +82,16 @@ export async function resolveOne(ip: string, env: Env): Promise<LookupResult> {
 
     // ── Online providers (public IPs only) ───────────────────────────────
     const tasks: Array<Promise<void>> = [];
+
+    // geolite: offline country + ASN, IPv4+IPv6, zero outbound calls —
+    // fire for every public IP with no quota gating.
+    if (!isReservedIp(ip)) {
+      tasks.push(
+        lookupGeolite(env, ip).then((r) => {
+          results.geolite = r;
+        }),
+      );
+    }
 
     if (cfg.ipinfoToken && !isReservedIp(ip)) {
       tasks.push(
