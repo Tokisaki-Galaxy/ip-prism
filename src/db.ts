@@ -1,10 +1,11 @@
 /**
- * R2-backed qqwry.dat loader with isolate-global caching.
+ * R2-backed offline database loader with isolate-global caching.
  *
- * On first access the worker fetches the dat file from R2 into a module-global
- * `Uint8Array`. Subsequent requests on the same isolate read from memory with
- * zero I/O. A content-hash check detects when the cron updater has pushed a
- * new version, triggering a transparent reload.
+ * Offline payloads (qqwry.dat, GeoLite2-*.mmdb) are fetched from R2 into
+ * module-global `Uint8Array`s keyed by R2 object key. Subsequent requests on
+ * the same isolate read from memory with zero I/O. A per-object etag check
+ * detects when the cron updater has pushed a new version, triggering a
+ * transparent reload of just that object.
  *
  * @module db
  */
@@ -13,14 +14,14 @@ import type { Env } from './types.ts';
 
 interface LoadedDb {
   buffer: Uint8Array;
-  /** FNV-1a hash of the buffer content, used for change detection. */
+  /** R2 etag of the source object, used for change detection. */
   hash: string;
   /** Unix ms when this was loaded. */
   loadedAt: number;
 }
 
-/** Module-global: the loaded database, persisted across requests on one isolate. */
-let cached: LoadedDb | null = null;
+/** Module-global: loaded databases keyed by R2 object key, per-isolate. */
+const cachedBy = new Map<string, LoadedDb>();
 
 /**
  * Compute a simple FNV-1a 32-bit hash as a hex string.
@@ -36,55 +37,58 @@ function fnv1a(data: Uint8Array): string {
 }
 
 /**
- * Load the qqwry.dat from R2, or return the cached version if unchanged.
+ * Load an offline database object from R2, or return the cached version if
+ * unchanged since the last load on this isolate.
  *
- * @param env  Worker environment (needs DB binding + DATA_OBJECT_KEY)
+ * @param env      Worker environment (needs DB binding)
+ * @param objectKey R2 object key identifying the payload
  * @returns The loaded database buffer and metadata, or `null` if the object
  *          doesn't exist in R2 yet (first deploy, before cron has run).
  */
-export async function loadDb(env: Env): Promise<LoadedDb | null> {
+export async function loadDbObject(env: Env, objectKey: string): Promise<LoadedDb | null> {
   // Check R2 for the object's etag to detect changes
-  const head = await env.DB.head(env.DATA_OBJECT_KEY);
+  const head = await env.DB.head(objectKey);
   if (!head) {
     return null; // Not yet uploaded
   }
 
+  const hit = cachedBy.get(objectKey);
   // If we have a cached version and the etag matches, reuse it
-  if (cached && cached.hash === head.etag) {
-    return cached;
+  if (hit && hit.hash === head.etag) {
+    return hit;
   }
 
   // Etag changed (or cold start) — fetch the full body
-  const obj = await env.DB.get(env.DATA_OBJECT_KEY);
+  const obj = await env.DB.get(objectKey);
   if (!obj) {
     return null;
   }
 
   const buffer = new Uint8Array(await obj.arrayBuffer());
   // Use the R2 etag as our hash — it's already a content hash
-  const hash = head.etag ?? fnv1a(buffer);
-
-  cached = {
+  const loaded: LoadedDb = {
     buffer,
-    hash,
+    hash: head.etag ?? fnv1a(buffer),
     loadedAt: Date.now(),
   };
 
-  return cached;
+  cachedBy.set(objectKey, loaded);
+
+  return loaded;
 }
 
 /**
- * Get the raw buffer for the qqwry database.
- * Convenience wrapper around {@link loadDb} that returns just the bytes.
+ * Get the raw bytes for an offline database object.
+ * Convenience wrapper around {@link loadDbObject} that returns just the bytes.
  *
  * @returns The database bytes, or `null` if not yet loaded into R2.
  */
-export async function getDbBuffer(env: Env): Promise<Uint8Array | null> {
-  const db = await loadDb(env);
+export async function getDbBuffer(env: Env, objectKey: string): Promise<Uint8Array | null> {
+  const db = await loadDbObject(env, objectKey);
   return db?.buffer ?? null;
 }
 
 /** Clear the isolate cache (for testing). */
 export function clearCache(): void {
-  cached = null;
+  cachedBy.clear();
 }

@@ -67,7 +67,7 @@ export async function resolveOne(ip: string, env: Env): Promise<LookupResult> {
     let china = false;
     let czOk = false;
     if (!isReservedIp(ip)) {
-      const dat = await getDbBuffer(env);
+      const dat = await getDbBuffer(env, env.DATA_OBJECT_KEY);
       if (!dat) {
         results.cz88 = { source: 'cz88', ok: false, error: 'database not loaded yet' };
         pending = true;

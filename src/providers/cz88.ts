@@ -187,7 +187,7 @@ function toSourceResult(ip: string, rec: NonNullable<ReturnType<QqwryFile['looku
 /**
  * Look up an IPv4 address against the loaded QQWry buffer.
  *
- * @param dat     Raw bytes of qqwry.dat (from db.loadDb)
+ * @param dat     Raw bytes of qqwry.dat (from db.loadDbObject)
  * @param ipStr   Normalised IPv4 dotted-quad
  */
 export function lookupCz88(dat: Uint8Array, ipStr: string): SourceResult {
