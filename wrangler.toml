@@ -1,0 +1,42 @@
+name = "ip-prism"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Free plan is sufficient: 10ms CPU/req, 128MB mem, 25MiB R2 object cap. ──
+# qqwry.dat (~6-11MB) fits R2 with room to spare; isolate-global cache avoids
+# per-request R2 reads after cold start.
+
+# Daily data refresh — runs at an odd minute to blend with general traffic.
+# Free plan allows up to 5 cron triggers per account.
+[triggers]
+crons = ["17 3 * * *"]
+
+# ── Bindings (create before first deploy) ──────────────────────────────────
+#   wrangler r2 bucket create ip-prism-db
+#   wrangler kv namespace create CACHE
+#   wrangler kv namespace create CACHE --preview   # → fill preview_id below
+
+[[r2_buckets]]
+binding = "DB"
+bucket_name = "ip-prism-db"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REPLACE_WITH_KV_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+
+# ── Non-secret vars (secrets via `wrangler secret put`) ─────────────────────
+#   wrangler secret put API_KEY          # X-API-Key header value (caller auth)
+#   wrangler secret put IPINFO_TOKEN     # ipinfo.io bearer token
+#   wrangler secret put AMAP_KEY         # restapi.amap.com key
+[vars]
+DATA_PRIMARY_URL = "https://raw.githubusercontent.com/FW27623/qqwry/main/qqwry.dat"
+DATA_FALLBACK_URL = "https://raw.githubusercontent.com/metowolf/qqwry.dat/main/qqwry.dat"
+DATA_OBJECT_KEY = "qqwry.dat"
+CACHE_TTL_SECONDS = "2592000"
+MAX_BATCH = "20"
+
+# ── Observability ───────────────────────────────────────────────────────────
+[observability]
+enabled = true

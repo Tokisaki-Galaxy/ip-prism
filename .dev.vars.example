@@ -1,0 +1,6 @@
+# Copy to .dev.vars and fill with real values for local `wrangler dev`.
+# Production secrets are set via `wrangler secret put <NAME>`.
+
+API_KEY="dev-local-key-change-me"
+IPINFO_TOKEN=""
+AMAP_KEY=""
