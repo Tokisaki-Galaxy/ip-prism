@@ -4,8 +4,8 @@
  * @module types
  */
 
-/** The three geo data sources supported by this worker. */
-export type GeoSource = 'cz88' | 'ipinfo' | 'amap';
+/** The geo data sources supported by this worker. */
+export type GeoSource = 'cz88' | 'geolite' | 'ipinfo' | 'amap';
 
 /**
  * A single source's resolution result for one IP.
@@ -29,7 +29,7 @@ export interface SourceResult {
   city?: string;
   /** District / county (amap only, within China). */
   district?: string;
-  /** Autonomous System Number (ipinfo only, e.g. "AS4134"). */
+  /** Autonomous System Number (ipinfo / geolite, e.g. "AS4134"). */
   asn?: string;
   /** Organisation / ISP name. */
   org?: string;
@@ -73,6 +73,13 @@ export interface Env {
   DATA_OBJECT_KEY: string;
   CACHE_TTL_SECONDS: string;
   MAX_BATCH: string;
+
+  /** GeoLite2 mirror URLs (GitHub release asset direct links). */
+  GEOLITE_COUNTRY_URL: string;
+  GEOLITE_ASN_URL: string;
+  /** R2 object keys under which the mmdb payloads are stored. */
+  GEOLITE_COUNTRY_KEY: string;
+  GEOLITE_ASN_KEY: string;
 
   // Secrets (wrangler secret put)
   API_KEY: string;
