@@ -23,8 +23,8 @@ bucket_name = "ip-prism-db"
 
 [[kv_namespaces]]
 binding = "CACHE"
-id = "REPLACE_WITH_KV_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+id = "16cc44dc7e8046edbe7598268564e1a6"
+preview_id = "1baa374dc25443ccb4d6cac37f344111"
 
 # ── Non-secret vars (secrets via `wrangler secret put`) ─────────────────────
 #   wrangler secret put API_KEY          # X-API-Key header value (caller auth)
@@ -40,3 +40,6 @@ MAX_BATCH = "20"
 # ── Observability ───────────────────────────────────────────────────────────
 [observability]
 enabled = true
+
+[placement]
+mode = "smart"
