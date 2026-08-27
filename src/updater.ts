@@ -89,7 +89,7 @@ export function looksLikeQqwryDat(buf: Uint8Array): boolean {
   );
 }
 
-/** ASCII bytes of the MMDB magic: 0xAB 0xCD 0xEF "MaxMind.com". */
+/** ASCII bytes of the MMDB metadata marker: 0xAB 0xCD 0xEF "MaxMind.com". */
 const MMDB_MAGIC = Uint8Array.of(
   0xab, 0xcd, 0xef,
   0x4d, 0x61, 0x78, 0x4d, 0x69, 0x6e, 0x64, 0x2e, 0x63, 0x6f, 0x6d,
@@ -97,21 +97,31 @@ const MMDB_MAGIC = Uint8Array.of(
 
 /**
  * Sanity-check that a downloaded buffer looks like a MaxMind DB (.mmdb):
- * - ≥ 512 bytes (real files are ≥ hundreds of KB; fixtures are small)
- * - starts with the 14-byte magic 0xAB CD EF "MaxMind.com"
- * - the u32le metadata size at offset 14 points back inside the file and
- *   the metadata section it addresses begins with a JSON object brace
+ * - ≥ 512 bytes (real files are ≥ hundreds of KB; small responses are error
+ *   pages, while hand-built spec-valid fixtures stay above the floor)
+ * - ends with the metadata: the 14-byte marker 0xAB CD EF "MaxMind.com"
+ *   followed immediately by a map-typed MMDB value (control byte 0b111xxxxx)
  */
 export function looksLikeMmdb(buf: Uint8Array): boolean {
-  if (buf.length < 512 || buf.length < MMDB_MAGIC.length + 4) return false;
-  for (let i = 0; i < MMDB_MAGIC.length; i++) {
-    if (buf[i] !== MMDB_MAGIC[i]) return false;
+  if (buf.length < 512) return false;
+  // Locate the metadata marker by scanning backwards (bounded window) — the
+  // last occurrence before the metadata map is the authoritative one.
+  const mlen = MMDB_MAGIC.length;
+  const searchFrom = Math.max(0, buf.length - 65536);
+  for (let i = buf.length - mlen; i >= searchFrom; i--) {
+    let matched = true;
+    for (let j = 0; j < mlen; j++) {
+      if (buf[i + j] !== MMDB_MAGIC[j]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      const ctrl = buf[i + mlen];
+      return ctrl !== undefined && ctrl >> 5 === 7; // metadata must be a map
+    }
   }
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  const metaSize = view.getUint32(MMDB_MAGIC.length, true);
-  const metaStart = buf.length - metaSize;
-  if (metaSize <= 0 || metaStart <= MMDB_MAGIC.length || metaStart >= buf.length) return false;
-  return buf[metaStart] === 0x7b; // '{'
+  return false;
 }
 
 /** Fetch with timeout via AbortController (Workers have no global WAIT by default). */

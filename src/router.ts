@@ -89,6 +89,7 @@ export async function resolveOne(ip: string, env: Env): Promise<LookupResult> {
       tasks.push(
         lookupGeolite(env, ip).then((r) => {
           results.geolite = r;
+          if (r.error === 'database not loaded yet') pending = true;
         }),
       );
     }
