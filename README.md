@@ -1,12 +1,22 @@
 # ip-prism
 
+<div align="center">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6.svg?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Cloudflare_Workers-F38020.svg?style=flat-square&logo=cloudflareworkers&logoColor=white" alt="Cloudflare Workers">
+  <img src="https://img.shields.io/badge/Cloudflare_R2-F38020.svg?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare R2">
+  <img src="https://img.shields.io/badge/Cloudflare_KV-F38020.svg?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare KV">
+  <img src="https://img.shields.io/badge/Vitest-729B1B.svg?style=flat-square&logo=vitest&logoColor=white" alt="Vitest">
+  <img src="https://img.shields.io/badge/pnpm-F69220.svg?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm">
+</div>
+
 Multi-source IP geolocation on Cloudflare Workers (free plan).
 
-One IP goes in, three spectra come out:
+One IP goes in, four spectra come out:
 
 | Source | Type | Coverage | Notes |
 |---|---|---|---|
 | **cz88** | offline (`qqwry.dat` via R2) | IPv4, China-strong | zero outbound calls; GBK decoded natively |
+| **geolite** | offline (GeoLite2 Country+ASN via R2) | global, IPv4+IPv6 | zero outbound calls; country ISO code, ASN, org |
 | **ipinfo** | online | global | ASN, org, lat/lon |
 | **amap** (高德) | online | mainland China only | province/city/adcode; quota-gated by cz88 CN detection |
 
@@ -25,7 +35,7 @@ All routes except `/healthz` require `X-API-Key: <API_KEY>` header.
 | GET | `/healthz` | Liveness. Returns `{ok,version}` only — no auth. |
 | GET | `/v1/lookup?ip=1.2.3.4` | Resolve one public IP across all sources. |
 | POST | `/v1/lookup` | Batch: body `{"ips":["a","b"]}`, max 20. Invalid/reserved entries reported inline in `errors`. |
-| POST | `/v1/admin/refresh` | Force a mirror pull of the latest qqwry.dat into R2 (same logic as the daily cron). |
+| POST | `/v1/admin/refresh` | Force a mirror pull of the latest offline DBs into R2 (same logic as the daily cron). |
 
 Single lookup response shape:
 
@@ -33,11 +43,13 @@ Single lookup response shape:
 {
   "ip": "36.99.5.5",
   "sources": {
-    "cz88":   { "source": "cz88",   "ok": true, "country": "CN", "region": "中国广东省" },
-    "amap":   { "source": "amap",   "ok": true, "region": "广东", "city": "深圳",
-                "adcode": "440300", "lat": 22.65, "lon": 114.2 },
-    "ipinfo": { "source": "ipinfo", "ok": true, "country": "CN",
-                "asn": "AS4134", "org": "Chinanet Guangdong" }
+    "cz88":    { "source": "cz88",    "ok": true, "country": "CN", "region": "中国广东省" },
+    "geolite": { "source": "geolite", "ok": true, "country": "CN",
+                 "asn": "AS4134", "org": "Chinanet" },
+    "amap":    { "source": "amap",    "ok": true, "region": "广东", "city": "深圳",
+                 "adcode": "440300", "lat": 22.65, "lon": 114.2 },
+    "ipinfo":  { "source": "ipinfo",  "ok": true, "country": "CN",
+                 "asn": "AS4134", "org": "Chinanet Guangdong" }
   },
   "resolvedAt": 1756280000000,
   "pending": false,          // true → some source timed out; retry shortly
@@ -45,7 +57,7 @@ Single lookup response shape:
 }
 ```
 
-IPv6 works for ipinfo/amap; cz88 is IPv4-only by database nature.
+IPv6 works for geolite/ipinfo/amap; cz88 is IPv4-only by database nature.
 Private / loopback / CGNAT addresses are rejected client-side with `400`.
 
 ## Deploy
@@ -69,15 +81,23 @@ npx wrangler deploy
 
 ## Data pipeline (zero manual updates)
 
-A daily cron (`17 03 * * *`) pulls the newest 纯真 database:
+A daily cron (`17 03 * * *`) refreshes every offline database:
+
+**cz88 / qqwry.dat** (~11 MB, China-strong IPv4):
 
 1. primary: <https://raw.githubusercontent.com/FW27623/qqwry/main/qqwry.dat>
    (daily auto-refresh from official channel)
 2. fallback: <https://raw.githubusercontent.com/metowolf/qqwry.dat/main/qqwry.dat>
 
-Downloads are sanity-checked (magic-offset validation) before upload; unchanged
-content is skipped via fingerprint comparison. The isolate reloads the buffer
-from R2 automatically when the object's ETag changes.
+**GeoLite2-Country.mmdb + GeoLite2-ASN.mmdb** (8.2 + 11.5 MB, global IPv4/IPv6):
+
+- primary: <https://github.com/P3TERX/GeoLite.mmdb> daily release assets
+  (country pipeline falls back to the <https://github.com/Loyalsoldier/geoip> mirror)
+
+Downloads are sanity-checked (qqwry header offsets / MMDB magic + metadata
+validation) before upload; unchanged content is skipped via fingerprint
+comparison. Isolates reload each buffer from R2 automatically when the
+object's ETag changes.
 
 Force an immediate refresh: `curl -XPOST -H 'X-API-Key: …' https://…workers.dev/v1/admin/refresh`
 
@@ -86,9 +106,11 @@ Force an immediate refresh: `curl -XPOST -H 'X-API-Key: …' https://…workers.
 ```bash
 BASE=https://<your-subdomain>.workers.dev
 
+curl -XPOST -H "X-API-Key: $KEY" "$BASE/v1/admin/refresh"          # pull all 3 DBs into R2
 curl "$BASE/healthz"
 curl -H "X-API-Key: $KEY" "$BASE/v1/lookup?ip=114.114.114.114"      # CN
 curl -H "X-API-Key: $KEY" "$BASE/v1/lookup?ip=8.8.8.8"              # US, no amap hit
+curl -H "X-API-Key: $KEY" "$BASE/v1/lookup?ip=2606:4700:4700::1111" # IPv6 via geolite
 curl -XPOST -H "X-API-Key: $KEY" -d '{"ips":["1.2.4.8","8.8.8.8","192.168.1.1"]}' \
      "$BASE/v1/lookup"                                              # inline error for reserved
 ```
@@ -102,16 +124,17 @@ pnpm dev          # local wrangler dev (needs .dev.vars, see .dev.vars.example)
 ```
 
 Test strategy: all third-party behaviour is exercised against hand-built
-spec-valid `qqwry.dat` fixtures and stubbed R2/KV bindings, so CI needs no
-network or real keys. The QQWry parser additionally self-checks its GBK byte
-table against the platform `TextDecoder` to fail loudly if runtime decode
-semantics drift.
+spec-valid `qqwry.dat` and MaxMind `.mmdb` fixtures and stubbed R2/KV
+bindings, so CI needs no network or real keys. The QQWry parser additionally
+self-checks its GBK byte table against the platform `TextDecoder` to fail
+loudly if runtime decode semantics drift.
 
 ## Architecture notes
 
-- `src/db.ts` loads the dat once per isolate into module-global memory; the
-  free-plan limits that matter are 25 MiB/R2 object (~11 MB used), 10 ms CPU
-  (binary search ≈ microseconds), 128 MB isolate memory.
+- `src/db.ts` loads each offline DB once per isolate into module-global
+  memory, keyed by R2 object; the free-plan limits that matter are
+  25 MiB/R2 object (~31 MB used total), 10 ms CPU (binary search ≈
+  microseconds), 128 MB isolate memory.
 - Rate limiting (`src/ratelimit.ts`) is per-isolate token bucket, 1 QPS +
   jitter per online provider. Exactness is not required — the caches absorb
   the rest.

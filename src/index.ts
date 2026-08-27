@@ -2,15 +2,16 @@
  * ip-prism — multi-source IP geolocation edge service.
  *
  * Sources:
- *   - cz88   : offline qqwry.dat (loaded from R2), IPv4, China-strong
- *   - ipinfo : online, global coverage + ASN + coordinates
- *   - amap   : online, mainland-China refinement (province/city/adcode)
+ *   - cz88    : offline qqwry.dat (loaded from R2), IPv4, China-strong
+ *   - geolite : offline GeoLite2 Country+ASN (loaded from R2), global, IPv4+IPv6
+ *   - ipinfo  : online, global coverage + ASN + coordinates
+ *   - amap    : online, mainland-China refinement (province/city/adcode)
  *
  * Endpoints:
  *   GET  /v1/lookup?ip=1.2.3.4   single IP
  *   POST /v1/lookup {ips:[...]}  batch (≤ MAX_BATCH)
  *   GET  /healthz                liveness (no auth — version only)
- *   POST /v1/admin/refresh       re-pull dat from mirrors on demand
+ *   POST /v1/admin/refresh       re-pull offline DBs from mirrors on demand
  *
  * All endpoints except /healthz require `X-API-Key`.
  *

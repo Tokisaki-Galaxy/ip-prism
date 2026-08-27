@@ -34,6 +34,13 @@ preview_id = "1baa374dc25443ccb4d6cac37f344111"
 DATA_PRIMARY_URL = "https://raw.githubusercontent.com/FW27623/qqwry/main/qqwry.dat"
 DATA_FALLBACK_URL = "https://raw.githubusercontent.com/metowolf/qqwry.dat/main/qqwry.dat"
 DATA_OBJECT_KEY = "qqwry.dat"
+# GeoLite2 daily mirrors (GitHub release asset direct links, no auth needed).
+# Loyalsoldier Country.mmdb is the hardcoded fallback for the country pipeline.
+# Isolate memory budget: qqwry ~11MB + Country ~8MB + ASN ~11.5MB ≈ 31MB / 128MB.
+GEOLITE_COUNTRY_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-Country.mmdb"
+GEOLITE_ASN_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-ASN.mmdb"
+GEOLITE_COUNTRY_KEY = "GeoLite2-Country.mmdb"
+GEOLITE_ASN_KEY = "GeoLite2-ASN.mmdb"
 CACHE_TTL_SECONDS = "2592000"
 MAX_BATCH = "20"
 
