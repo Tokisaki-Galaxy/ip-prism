@@ -43,19 +43,41 @@ Single lookup response shape:
 {
   "ip": "36.99.5.5",
   "sources": {
-    "cz88":    { "source": "cz88",    "ok": true, "country": "CN", "region": "中国广东省" },
+    "cz88":    { "source": "cz88",    "ok": true, "country": "CN", "region": "中国–湖北–武汉" },
     "geolite": { "source": "geolite", "ok": true, "country": "CN",
                  "asn": "AS4134", "org": "Chinanet" },
-    "amap":    { "source": "amap",    "ok": true, "region": "广东", "city": "深圳",
-                 "adcode": "440300", "lat": 22.65, "lon": 114.2 },
+    "amap":    { "source": "amap",    "ok": true, "region": "湖北", "city": "武汉",
+                 "adcode": "420100", "lat": 22.65, "lon": 114.2 },
     "ipinfo":  { "source": "ipinfo",  "ok": true, "country": "CN",
                  "asn": "AS4134", "org": "Chinanet Guangdong" }
   },
-  "resolvedAt": 1756280000000,
-  "pending": false,          // true → some source timed out; retry shortly
-  "summary": "CN · 中国广东省 · 深圳"
+  "best": {
+    "country": { "value": "CN",   "source": "geolite" },
+    "region":  { "value": "湖北", "source": "amap" },
+    "city":    { "value": "武汉", "source": "amap" },
+    "isp":     { "value": "电信", "source": "cz88" }
+  },
+  "resolvedAt": 1756280000000,   // Unix epoch ms
+  "pending": false,              // true → result incomplete; retry shortly
+  "summary": "CN · 湖北 · 武汉 · 电信"
 }
 ```
+
+### `best` / `summary` semantics
+
+`best` picks each field from its AUTHORITATIVE source via a fixed priority
+matrix (not first-wins), with source attribution:
+
+| Slot | Priority | Notes |
+|---|---|---|
+| `country` | geolite → ipinfo → cz88 | ISO 3166-1 alpha-2, language-neutral |
+| `region` | CN: amap → cz88¹ → ipinfo · non-CN: ipinfo → cz88 | ¹ combined `中国–湖北–武汉` records are split; 省/市 suffixes stripped |
+| `city` | CN: amap → cz88¹ → ipinfo · non-CN: ipinfo | |
+| `isp` | cz88 (CN IPs only) | access-network ISP (电信/联通/移动); AS org is a different concept and stays out |
+
+`summary` is a deterministic rendering of `best`: ISO country code +
+administrative names joined with ` · ` — Chinese for CN IPs, English
+elsewhere (locale convention borrowed from ip2region).
 
 IPv6 works for geolite/ipinfo/amap; cz88 is IPv4-only by database nature.
 Private / loopback / CGNAT addresses are rejected client-side with `400`.
