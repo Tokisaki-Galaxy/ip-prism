@@ -195,6 +195,19 @@ describe('runUpdate', () => {
       ],
       { padTo: 1024 },
     );
+    const city = buildMmdb(
+      [
+        {
+          prefix: '8.8.8.0/24',
+          record: {
+            country: { iso_code: 'DE' },
+            city: { names: { en: 'Mountain View' } },
+            location: { latitude: 37.4, longitude: -122.1 },
+          },
+        },
+      ],
+      { padTo: 1024 },
+    );
 
     vi.stubGlobal(
       'fetch',
@@ -203,6 +216,7 @@ describe('runUpdate', () => {
         if (u.includes('qqwry')) return new Response(padPastMinSize(defaultFixture()).slice().buffer);
         if (u.includes('Country')) return new Response(country.slice().buffer);
         if (u.includes('ASN')) return new Response(asn.slice().buffer);
+        if (u.includes('City')) return new Response(city.slice().buffer);
         throw new Error(`unexpected url ${u}`);
       }),
     );
@@ -211,17 +225,21 @@ describe('runUpdate', () => {
       envWith(db, {
         GEOLITE_COUNTRY_URL: 'https://geo.invalid/GeoLite2-Country.mmdb',
         GEOLITE_ASN_URL: 'https://geo.invalid/GeoLite2-ASN.mmdb',
+        GEOLITE_CITY_URL: 'https://geo.invalid/GeoLite2-City.mmdb',
         GEOLITE_COUNTRY_KEY: 'GeoLite2-Country.mmdb',
         GEOLITE_ASN_KEY: 'GeoLite2-ASN.mmdb',
+        GEOLITE_CITY_KEY: 'GeoLite2-City.mmdb',
       }),
     );
 
     expect(status).toContain('qqwry:updated:');
     expect(status).toContain('geolite-country:updated:');
     expect(status).toContain('geolite-asn:updated:');
+    expect(status).toContain('geolite-city:updated:');
     expect(anyPipelineFailed(status)).toBe(false);
     expect(db.objects.get('GeoLite2-Country.mmdb')).toBeDefined();
     expect(db.objects.get('GeoLite2-ASN.mmdb')).toBeDefined();
+    expect(db.objects.get('GeoLite2-City.mmdb')).toBeDefined();
   });
 
   it('keeps ok=true when only one pipeline fails', async () => {

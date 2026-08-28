@@ -94,9 +94,15 @@ export interface Env {
   /** GeoLite2 mirror URLs (GitHub release asset direct links). */
   GEOLITE_COUNTRY_URL: string;
   GEOLITE_ASN_URL: string;
+  /** GeoLite2-City mirror — enables offline region/city/coords lookups.
+   *  Optional: absent/empty skips the update pipeline and the city reader
+   *  (country lookups then come from the Country database as before). */
+  GEOLITE_CITY_URL?: string;
   /** R2 object keys under which the mmdb payloads are stored. */
   GEOLITE_COUNTRY_KEY: string;
   GEOLITE_ASN_KEY: string;
+  /** R2 key for the City database (defaults to `GeoLite2-City.mmdb`). */
+  GEOLITE_CITY_KEY?: string;
 
   // Secrets (wrangler secret put)
   API_KEY: string;

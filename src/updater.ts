@@ -66,6 +66,18 @@ export function buildPipelines(env: Env): UpdatePipeline[] {
     });
   }
 
+  // City database (~62MB): optional — enables offline region/city lookups.
+  // Same validate/fingerprint flow; the R2 put streams the whole buffer, so
+  // cron CPU stays low (only the arrayBuffer assembly touches the limit).
+  if (env.GEOLITE_CITY_URL) {
+    pipelines.push({
+      label: 'geolite-city',
+      objectKey: env.GEOLITE_CITY_KEY || 'GeoLite2-City.mmdb',
+      urls: [env.GEOLITE_CITY_URL],
+      validate: looksLikeMmdb,
+    });
+  }
+
   return pipelines;
 }
 

@@ -3,9 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
-# ── Free plan is sufficient: 10ms CPU/req, 128MB mem, 25MiB R2 object cap. ──
-# qqwry.dat (~6-11MB) fits R2 with room to spare; isolate-global cache avoids
-# per-request R2 reads after cold start.
+# ── Free plan is sufficient: 10ms CPU/req, 128MB mem. DBs live in R2
+# (5TB/object cap, 10GB free) and are cached isolate-globally after cold start. ──
 
 # Daily data refresh — runs at an odd minute to blend with general traffic.
 # Free plan allows up to 5 cron triggers per account.
@@ -36,11 +35,15 @@ DATA_FALLBACK_URL = "https://raw.githubusercontent.com/metowolf/qqwry.dat/main/q
 DATA_OBJECT_KEY = "qqwry.dat"
 # GeoLite2 daily mirrors (GitHub release asset direct links, no auth needed).
 # Loyalsoldier Country.mmdb is the hardcoded fallback for the country pipeline.
-# Isolate memory budget: qqwry ~11MB + Country ~8MB + ASN ~11.5MB ≈ 31MB / 128MB.
+# Isolate memory budget (all cached isolate-globally):
+#   qqwry ~11MB + City ~62MB + ASN ~11.5MB ≈ 85MB / 128MB
+#   (City active → Country.mmdb is not loaded; without City → Country ~8MB.)
 GEOLITE_COUNTRY_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-Country.mmdb"
 GEOLITE_ASN_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-ASN.mmdb"
+GEOLITE_CITY_URL = "https://github.com/P3TERX/GeoLite.mmdb/releases/latest/download/GeoLite2-City.mmdb"
 GEOLITE_COUNTRY_KEY = "GeoLite2-Country.mmdb"
 GEOLITE_ASN_KEY = "GeoLite2-ASN.mmdb"
+GEOLITE_CITY_KEY = "GeoLite2-City.mmdb"
 CACHE_TTL_SECONDS = "2592000"
 MAX_BATCH = "20"
 
