@@ -30,6 +30,7 @@ const UTF8 = 2;
 const MAP = 7;
 const ARRAY = 11;
 const UINT64 = 9;
+const FLOAT = 15;
 
 function encodeUtf8(s: string): number[] {
   const b = Buffer.from(s, 'utf8');
@@ -37,6 +38,15 @@ function encodeUtf8(s: string): number[] {
   if (b.length < 285) return [(UTF8 << 5) | 29, b.length - 29, ...b];
   const rest = b.length - 285;
   return [(UTF8 << 5) | 30, rest >> 8, rest & 0xff, ...b];
+}
+
+function encodeFloat(v: number): number[] {
+  const bytes: number[] = [];
+  const view = new DataView(new ArrayBuffer(4));
+  view.setFloat32(0, v, false); // big-endian, per spec
+  for (let i = 0; i < 4; i++) bytes.push(view.getUint8(i));
+  // Extended type: 4-byte payload, type number FLOAT - 7
+  return [4, FLOAT - 7, ...bytes];
 }
 
 function encodeUint32(v: number): number[] {
@@ -82,7 +92,11 @@ type MmdbValue = string | number | bigint | MmdbValue[] | { [k: string]: MmdbVal
 
 function encodeMmdbValue(v: MmdbValue): number[] {
   if (typeof v === 'string') return encodeUtf8(v);
-  if (typeof v === 'number') return encodeUint32(v);
+  if (typeof v === 'number') {
+    // Non-integers (coordinates) must be MMDB floats — uint32 truncation
+    // would silently round 48.1375 down to 48.
+    return Number.isInteger(v) ? encodeUint32(v) : encodeFloat(v);
+  }
   if (typeof v === 'bigint') return encodeUint64(v);
   if (Array.isArray(v)) return encodeArray(v.map(encodeMmdbValue));
   const entries: Array<[string, number[]]> = [];
