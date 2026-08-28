@@ -17,17 +17,10 @@
     "@types/node": "^26.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
-    "wrangler": "^3.99.0"
+    "wrangler": "^4.127.0"
   },
   "engines": {
     "node": ">=20"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp",
-      "workerd"
-    ]
   },
   "dependencies": {
     "mmdb-lib": "^3.0.3"
