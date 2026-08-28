@@ -155,12 +155,12 @@ describe('handleSingle', () => {
     expect(body.sources.cz88?.error).toContain('not loaded');
   });
 
-  it('caches resolved results in KV write-through (v2 key)', async () => {
+  it('caches resolved results in KV write-through (v3 key)', async () => {
     const env = makeEnv();
     await handleSingle(new URL('https://x/v1/lookup?ip=1.2.4.77'), env);
     const kv = (env.CACHE as unknown as { store: Map<string, string> }).store;
-    expect(kv.has('geo:v2:1.2.4.77')).toBe(true);
-    const raw = kv.get('geo:v2:1.2.4.77')!;
+    expect(kv.has('geo:v3:1.2.4.77')).toBe(true);
+    const raw = kv.get('geo:v3:1.2.4.77')!;
     expect(raw).toContain('"ok":true');
   });
 });

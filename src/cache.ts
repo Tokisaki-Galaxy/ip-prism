@@ -55,8 +55,10 @@ export async function cacheGet(
     return mem.result;
   }
 
-  // Tier 2: KV (v2 key prefix — result schema versions invalidate cleanly)
-  const raw = await kv.get(`geo:v2:${ip}`, 'json');
+  // Tier 2: KV (v3 key prefix — bump whenever the offline-db composition or
+  // provider capabilities change; cached results can't be retro-invalidated
+  // when a new database lands in R2, so old-prefixed entries simply age out)
+  const raw = await kv.get(`geo:v3:${ip}`, 'json');
   if (raw) {
     const row = raw as CacheRow;
     if (row.expiresAt > now) {
@@ -81,7 +83,7 @@ export async function cacheSet(
   const row: CacheRow = { result, expiresAt };
   memCache.set(ip, row);
   pruneMemCache();
-  await kv.put(`geo:v2:${ip}`, JSON.stringify(row), { expirationTtl: Math.ceil(ttlMs / 1000) });
+  await kv.put(`geo:v3:${ip}`, JSON.stringify(row), { expirationTtl: Math.ceil(ttlMs / 1000) });
 }
 
 /** Clear the isolate memory cache (for testing). */
