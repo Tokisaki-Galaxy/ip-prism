@@ -55,8 +55,8 @@ export async function cacheGet(
     return mem.result;
   }
 
-  // Tier 2: KV
-  const raw = await kv.get(`geo:${ip}`, 'json');
+  // Tier 2: KV (v2 key prefix — result schema versions invalidate cleanly)
+  const raw = await kv.get(`geo:v2:${ip}`, 'json');
   if (raw) {
     const row = raw as CacheRow;
     if (row.expiresAt > now) {
@@ -81,7 +81,12 @@ export async function cacheSet(
   const row: CacheRow = { result, expiresAt };
   memCache.set(ip, row);
   pruneMemCache();
-  await kv.put(`geo:${ip}`, JSON.stringify(row), { expirationTtl: Math.ceil(ttlMs / 1000) });
+  await kv.put(`geo:v2:${ip}`, JSON.stringify(row), { expirationTtl: Math.ceil(ttlMs / 1000) });
+}
+
+/** Clear the isolate memory cache (for testing). */
+export function resetMemCache(): void {
+  memCache.clear();
 }
 
 /**

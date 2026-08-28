@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleBatch, handleSingle, resolveOne } from '../src/router';
 import { resetLimiter } from '../src/ratelimit';
 import { clearCache } from '../src/db';
+import { resetMemCache } from '../src/cache';
 import { buildQqwryDat, defaultFixture } from './fixture-builder';
 import { buildMmdb } from './mmdb-fixture-builder';
 import type { Env } from '../src/types';
@@ -94,9 +95,11 @@ function makeEnv(overrides: Partial<Record<string, string>> = {}): Env {
 beforeEach(() => {
   vi.unstubAllGlobals();
   resetLimiter();
-  // db.loadDbObject caches per object key isolate-globally; stub etags are
-  // size-derived, so clear between tests to avoid same-size fixture collisions.
+  // Module-global caches: db.loadDbObject caches per object key with
+  // size-derived stub etags, and cache.ts's isolate Map would leak resolved
+  // results across tests. Clear both.
   clearCache();
+  resetMemCache();
 });
 
 afterEach(() => {
@@ -152,12 +155,12 @@ describe('handleSingle', () => {
     expect(body.sources.cz88?.error).toContain('not loaded');
   });
 
-  it('caches resolved results in KV write-through', async () => {
+  it('caches resolved results in KV write-through (v2 key)', async () => {
     const env = makeEnv();
     await handleSingle(new URL('https://x/v1/lookup?ip=1.2.4.77'), env);
     const kv = (env.CACHE as unknown as { store: Map<string, string> }).store;
-    expect(kv.has('geo:1.2.4.77')).toBe(true);
-    const raw = kv.get('geo:1.2.4.77')!;
+    expect(kv.has('geo:v2:1.2.4.77')).toBe(true);
+    const raw = kv.get('geo:v2:1.2.4.77')!;
     expect(raw).toContain('"ok":true');
   });
 });
@@ -245,6 +248,10 @@ describe('resolveOne — online provider gating', () => {
     expect(res.sources.amap?.lat).toBeCloseTo(22.65, 5);
     expect(res.sources.amap?.lon).toBeCloseTo(114.2, 5);
     expect(res.summary).toContain('深圳');
+    // Best-guess matrix: amap owns region/city, cz88 provides the ISO country.
+    expect(res.best.country).toEqual({ value: 'CN', source: 'cz88' });
+    expect(res.best.region).toEqual({ value: '广东', source: 'amap' });
+    expect(res.best.city).toEqual({ value: '深圳', source: 'amap' });
   });
 
   it('calls ipinfo with bearer token and splits ASN/org', async () => {
@@ -287,6 +294,11 @@ describe('resolveOne — geolite offline source', () => {
     expect(res.sources.geolite?.org).toBe('GOOGLE');
     expect(fetchMock).not.toHaveBeenCalled();
     expect(res.pending).toBe(false);
+    // Best-guess matrix: geolite owns country; region falls back to the
+    // cz88 whole-string (non-CN branch, no ipinfo token configured).
+    expect(res.best.country).toEqual({ value: 'DE', source: 'geolite' });
+    expect(res.best.region).toEqual({ value: 'CHINA', source: 'cz88' });
+    expect(res.summary).toBe('DE · CHINA');
   });
 
   it('resolves IPv6 addresses that cz88 cannot cover', async () => {
@@ -295,6 +307,7 @@ describe('resolveOne — geolite offline source', () => {
     expect(res.sources.geolite?.ok).toBe(true);
     expect(res.sources.geolite?.country).toBe('US');
     expect(res.summary).toBe('US');
+    expect(res.best.country).toEqual({ value: 'US', source: 'geolite' });
   });
 
   it('marks pending when only the geolite dbs are missing', async () => {

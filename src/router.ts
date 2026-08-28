@@ -13,6 +13,7 @@ import { lookupCz88 } from './providers/cz88';
 import { lookupGeolite } from './providers/geolite';
 import { lookupIpInfo } from './providers/ipinfo';
 import { lookupAmap } from './providers/amap';
+import { buildBest, renderSummary } from './summary';
 import { isReservedIp, isValidIp, likelyChina, normaliseIp } from './util';
 
 /** Parsed request-scoped config. */
@@ -32,22 +33,6 @@ export function config(env: Env): RuntimeConfig {
     ipinfoToken: env.IPINFO_TOKEN ?? '',
     amapKey: env.AMAP_KEY ?? '',
   };
-}
-
-/**
- * Build a one-line summary from per-source results.
- * Slots: [country, region, city] filled by first source providing each.
- */
-export function summarise(sources: Partial<Record<GeoSource, SourceResult>>): string {
-  const parts: string[] = [];
-  for (const key of ['cz88', 'geolite', 'ipinfo', 'amap'] as const) {
-    const s = sources[key];
-    if (!s?.ok) continue;
-    if (!parts[0] && s.country) parts[0] = s.country;
-    if (!parts[1] && s.region && s.region !== s.country) parts[1] = s.region;
-    if (!parts[2] && s.city && s.city !== s.region) parts[2] = s.city;
-  }
-  return parts.filter(Boolean).join(' · ');
 }
 
 /**
@@ -116,12 +101,14 @@ export async function resolveOne(ip: string, env: Env): Promise<LookupResult> {
 
     await Promise.all(tasks);
 
+    const best = buildBest(results);
     const result: LookupResult = {
       ip,
       sources: results,
+      best,
       resolvedAt: now,
       pending,
-      summary: summarise(results),
+      summary: renderSummary(best),
     };
 
     if (!pending && Object.values(results).some((r) => r?.ok)) {
