@@ -16,7 +16,7 @@ One IP goes in, four spectra come out:
 | Source | Type | Coverage | Notes |
 |---|---|---|---|
 | **cz88** | offline (`qqwry.dat` via R2) | IPv4, China-strong | zero outbound calls; GBK decoded natively |
-| **geolite** | offline (GeoLite2 Country+ASN via R2) | global, IPv4+IPv6 | zero outbound calls; country ISO code, ASN, org |
+| **geolite** | offline (GeoLite2 City+ASN via R2) | global, IPv4+IPv6 | zero outbound calls; country ISO code, region/city (City db), ASN, org, lat/lon |
 | **ipinfo** | online | global | ASN, org, lat/lon |
 | **amap** (高德) | online | mainland China only | province/city/adcode; quota-gated by cz88 CN detection |
 
@@ -71,9 +71,14 @@ matrix (not first-wins), with source attribution:
 | Slot | Priority | Notes |
 |---|---|---|
 | `country` | geolite → ipinfo → cz88 | ISO 3166-1 alpha-2, language-neutral |
-| `region` | CN: amap → cz88¹ → ipinfo · non-CN: ipinfo → cz88 | ¹ combined `中国–湖北–武汉` records are split; 省/市 suffixes stripped |
-| `city` | CN: amap → cz88¹ → ipinfo · non-CN: ipinfo | |
+| `region` | CN: amap → cz88¹ → ipinfo · non-CN: geolite → ipinfo → cz88 | ¹ combined `中国–湖北–武汉` records are split; 省/市 suffixes stripped |
+| `city` | CN: amap → cz88¹ → ipinfo · non-CN: geolite → ipinfo | |
 | `isp` | cz88 (CN IPs only) | access-network ISP (电信/联通/移动); AS org is a different concept and stays out |
+
+geolite's region/city come from the optional GeoLite2-City database (English
+names, offline); it leads the non-CN chains so lookups stay zero-outbound
+whenever possible, with ipinfo as the online refinement. CN chains keep the
+Chinese-locale convention and never consume geolite's English names.
 
 `summary` is a deterministic rendering of `best`: ISO country code +
 administrative names joined with ` · ` — Chinese for CN IPs, English
@@ -111,10 +116,19 @@ A daily cron (`17 03 * * *`) refreshes every offline database:
    (daily auto-refresh from official channel)
 2. fallback: <https://raw.githubusercontent.com/metowolf/qqwry.dat/main/qqwry.dat>
 
-**GeoLite2-Country.mmdb + GeoLite2-ASN.mmdb** (8.2 + 11.5 MB, global IPv4/IPv6):
+**GeoLite2-City.mmdb + GeoLite2-ASN.mmdb** (62.1 + 11.5 MB, global IPv4/IPv6;
+the legacy Country.mmdb pipeline stays configured as the country fallback when
+the City database is not yet uploaded):
 
 - primary: <https://github.com/P3TERX/GeoLite.mmdb> daily release assets
   (country pipeline falls back to the <https://github.com/Loyalsoldier/geoip> mirror)
+
+City-db memory budget on the Workers free plan: all databases are cached
+isolate-globally — qqwry ~11 MB + City ~62 MB + ASN ~11.5 MB ≈ 85 MB of the
+128 MB isolate limit (the Country db is not loaded while the City db is
+present). If an deployment ever trips the memory limit, point
+`GEOLITE_CITY_URL` at DB-IP's Lite City mmdb (~40 MB, same format, CC-BY
+attribution required) — the parser is format-identical.
 
 Downloads are sanity-checked (qqwry header offsets / MMDB magic + metadata
 validation) before upload; unchanged content is skipped via fingerprint
@@ -128,7 +142,7 @@ Force an immediate refresh: `curl -XPOST -H 'X-API-Key: …' https://…workers.
 ```bash
 BASE=https://<your-subdomain>.workers.dev
 
-curl -XPOST -H "X-API-Key: $KEY" "$BASE/v1/admin/refresh"          # pull all 3 DBs into R2
+curl -XPOST -H "X-API-Key: $KEY" "$BASE/v1/admin/refresh"          # pull all 4 DBs into R2 (City is ~62MB)
 curl "$BASE/healthz"
 curl -H "X-API-Key: $KEY" "$BASE/v1/lookup?ip=114.114.114.114"      # CN
 curl -H "X-API-Key: $KEY" "$BASE/v1/lookup?ip=8.8.8.8"              # US, no amap hit
@@ -155,8 +169,10 @@ loudly if runtime decode semantics drift.
 
 - `src/db.ts` loads each offline DB once per isolate into module-global
   memory, keyed by R2 object; the free-plan limits that matter are
-  25 MiB/R2 object (~31 MB used total), 10 ms CPU (binary search ≈
-  microseconds), 128 MB isolate memory.
+  10 ms CPU (binary search ≈ microseconds), 128 MB isolate memory
+  (~85 MB used with the City database; see the data pipeline section for
+  the budget and the DB-IP fallback), R2 objects up to 5 TB (KV's 25 MiB
+  value cap is why payloads live in R2).
 - Rate limiting (`src/ratelimit.ts`) is per-isolate token bucket, 1 QPS +
   jitter per online provider. Exactness is not required — the caches absorb
   the rest.
