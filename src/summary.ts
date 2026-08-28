@@ -98,7 +98,8 @@ export function buildBest(
 
   // region: CN — amap authoritative (adcode cross-check), cz88-parsed
   // Chinese beats ipinfo's English; whole-string cz88 as last resort.
-  // non-CN — ipinfo registry names beat cz88 transliterations.
+  //   (geolite English names stay out of CN chains — locale convention.)
+  // non-CN — geolite (offline-first) → ipinfo registry names → cz88.
   const region = first(
     isCN
       ? [
@@ -108,13 +109,14 @@ export function buildBest(
           { source: 'cz88' as const, value: cz?.region },
         ]
       : [
+          { source: 'geolite' as const, value: geo?.region },
           { source: 'ipinfo' as const, value: ipi?.region },
           { source: 'cz88' as const, value: cz?.region },
         ],
   );
   if (region) best.region = region;
 
-  // city: amap → cz88-parsed → ipinfo for CN; ipinfo only otherwise.
+  // city: amap → cz88-parsed → ipinfo for CN; geolite → ipinfo otherwise.
   const city = first(
     isCN
       ? [
@@ -122,7 +124,10 @@ export function buildBest(
           { source: 'cz88' as const, value: czSplit.city },
           { source: 'ipinfo' as const, value: ipi?.city },
         ]
-      : [{ source: 'ipinfo' as const, value: ipi?.city }],
+      : [
+          { source: 'geolite' as const, value: geo?.city },
+          { source: 'ipinfo' as const, value: ipi?.city },
+        ],
   );
   if (city) best.city = city;
 

@@ -58,10 +58,10 @@ describe('buildBest — priority matrix', () => {
     expect(renderSummary(best)).toBe('CN · 湖北 · 武汉 · 电信');
   });
 
-  it('CN IP without amap: cz88-parsed Chinese beats ipinfo English', () => {
+  it('CN IP without amap: cz88-parsed Chinese beats ipinfo/geolite English', () => {
     const best = buildBest({
       cz88: src('cz88', { country: 'CN', region: '中国–广东–深圳', org: '电信' }),
-      geolite: src('geolite', { country: 'CN' }),
+      geolite: src('geolite', { country: 'CN', region: 'Guangdong', city: 'Shenzhen' }),
       ipinfo: src('ipinfo', { country: 'CN', region: 'Guangdong', city: 'Shenzhen' }),
     });
 
@@ -82,6 +82,34 @@ describe('buildBest — priority matrix', () => {
     expectSlot(best, 'city', 'Mountain View', 'ipinfo');
     expect(best.isp).toBeUndefined();
     expect(renderSummary(best)).toBe('US · California · Mountain View');
+  });
+
+  it('foreign IP without ipinfo: geolite city data fills region/city offline', () => {
+    const best = buildBest({
+      cz88: src('cz88', { region: 'USA CALIFORNIA', org: 'GOOGLE' }),
+      geolite: src('geolite', {
+        country: 'US',
+        region: 'California',
+        city: 'Mountain View',
+        lat: 37.4,
+        lon: -122.1,
+      }),
+    });
+
+    expectSlot(best, 'country', 'US', 'geolite');
+    expectSlot(best, 'region', 'California', 'geolite');
+    expectSlot(best, 'city', 'Mountain View', 'geolite');
+    expect(renderSummary(best)).toBe('US · California · Mountain View');
+  });
+
+  it('foreign IP with both: geolite wins region/city (offline-first)', () => {
+    const best = buildBest({
+      geolite: src('geolite', { country: 'DE', region: 'Bavaria', city: 'Munich' }),
+      ipinfo: src('ipinfo', { country: 'DE', region: 'Bavaria', city: 'Munich' }),
+    });
+
+    expectSlot(best, 'region', 'Bavaria', 'geolite');
+    expectSlot(best, 'city', 'Munich', 'geolite');
   });
 
   it('IPv6 with only geolite: country-only summary', () => {
