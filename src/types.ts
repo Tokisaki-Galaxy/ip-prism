@@ -45,6 +45,17 @@ export interface SourceResult {
   raw?: unknown;
 }
 
+/** Slots of the best-guess field map, in display order. */
+export type BestSlot = 'country' | 'region' | 'city' | 'isp';
+
+/** A best-guess field value with the source that provided it. */
+export interface FieldAttribution {
+  /** Field value (country: ISO 3166-1 alpha-2; region/city: administrative name; isp: access ISP). */
+  value: string;
+  /** Which source won this slot. */
+  source: GeoSource;
+}
+
 /** Aggregated result for one IP across all configured sources. */
 export interface LookupResult {
   /** The queried IP (normalised, no ::ffff: prefix). */
@@ -52,12 +63,18 @@ export interface LookupResult {
   /** Per-source results keyed by source name. Absent sources were disabled
    *  (missing API key) or skipped (not applicable). */
   sources: Partial<Record<GeoSource, SourceResult>>;
+  /** Best-guess per-field values, each attributed to its authoritative
+   *  source (per-field priority, not first-wins). Empty object when no
+   *  source succeeded. */
+  best: Partial<Record<BestSlot, FieldAttribution>>;
   /** Unix epoch (ms) when this result was assembled. */
   resolvedAt: number;
   /** `true` when one or more sources are still in-flight or timed out; the
    *  caller may retry shortly to pick up completed results. */
   pending: boolean;
-  /** Best-effort one-line summary for list views, e.g. "CN · 广东 · 深圳". */
+  /** Deterministic one-line rendering of `best` for list views, e.g.
+   *  "CN · 湖北 · 武汉 · 电信". Locale convention: ISO country code +
+   *  Chinese administrative names for CN IPs, English elsewhere. */
   summary: string;
 }
 
